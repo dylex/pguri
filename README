@@ -1,0 +1,6 @@
+A simple PostgreSQL URI type similar to http://pgfoundry.org/projects/uri that
+allows efficient indexing and searching of URIs.  It was designed for storing
+web browsing history and policies.  It breaks URI strings up into their scheme,
+domain (itself broken up by dots and reversed for the sake of sorting), port,
+and path.  URIs can be partial, with any part missing, and defines ordering and
+containment relations, such that 'foo.com' @> 'http://www.foo.com/path'.
