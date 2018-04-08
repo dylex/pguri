@@ -1,12 +1,3 @@
-*.hi
 *.o
 *.so
-*.min.js
-jss
-huzblem
 pguri.sql
-block
-cookies*.txt
-log
-/dist/
-/.stack-work/
