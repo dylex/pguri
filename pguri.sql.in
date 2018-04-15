@@ -62,7 +62,7 @@ CREATE OR REPLACE FUNCTION domainname_parents(domainname) RETURNS domainname[] L
 CREATE OR REPLACE FUNCTION domainname_contains(domainname, domainname) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS 
 	$$ SELECT $1 = ANY (domainname_parents($2)) $$;
 CREATE OR REPLACE FUNCTION domainname_contained(domainname, domainname) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS 
-	$$ SELECT $1 = $2 OR $1 LIKE ($2 || '.%') $$;
+	$$ SELECT $1 = $2 OR $1 LIKE ('%.' || $2) $$;
 
 CREATE OPERATOR @> (LEFTARG = domainname, RIGHTARG = domainname, PROCEDURE = domainname_contains,
 	COMMUTATOR = '<@', RESTRICT = contsel, JOIN = contjoinsel);
