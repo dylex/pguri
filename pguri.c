@@ -27,30 +27,75 @@ Datum unsafe_cast(PG_FUNCTION_ARGS)
 		STR; \
 	})
 
-static const char *strndigit(const char *s, size_t len)
+static const char *skip_octet(const char *p, const char *e)
 {
-	return STRSEARCH(s, len, *s < '0' || *s > '9');
+	if (p >= e)
+		return p;
+	if (p[0] == '0')
+		return &p[1];
+	if (p[0] == '1') {
+		if (p+1 < e && p[1] >= '0' && p[1] <= '9') {
+			if (p+2 < e && p[2] >= '0' && p[2] <= '9')
+				return &p[3];
+			return &p[2];
+		}
+		return &p[1];
+	}
+	if (p[0] == '2') {
+		if (p+1 < e) {
+			if (p[1] >= '0' && p[1] <= '4') {
+				if (p+2 < e && p[2] >= '0' && p[2] <= '9')
+					return &p[3];
+				return &p[2];
+			}
+			if (p[1] == '5') {
+				if (p+2 < e && p[2] >= '0' && p[2] < '6')
+					return &p[3];
+				return &p[2];
+			}
+			if (p[1] >= '6' && p[1] <= '9')
+				return &p[2];
+		}
+		return &p[1];
+	}
+	if (p[0] >= '3' && p[0] <= '9') {
+		if (p+1 < e && p[1] >= '0' && p[1] <= '9')
+			return &p[2];
+		return &p[1];
+	}
+	return NULL;
+}
+
+static bool isip(const char *p, const char *e)
+{
+	unsigned i;
+
+	if (p < e-1 && *p == '[')
+		return true;
+
+	for (i = 0; i < 4 && p < e; i ++)
+	{
+		p = skip_octet(p, e);
+		if (!p)
+			return false;
+		if (p >= e)
+			return true;
+		if (*p != '.')
+			return false;
+		if (i < 3)
+			p ++;
+	}
+
+	return p >= e;
 }
 
 static void domainname_flip(char *out, const char *in, size_t len)
 {
-	unsigned i;
 	const char *e = in+len;
-	const char *p = in, *n;
+	const char *n = in;
 	char *o = out+len;
 
-	for (i = 0; i < 4 && p < e; i ++)
-	{
-		p = strndigit(p, MIN(3,e-p));
-		if (p >= e || *p != '.')
-			break;
-		if (i < 3 && *p == '.')
-			p ++;
-	}
-
-	if (p >= e)
-	{
-		/* looks like an IP: as is */
+	if (isip(in, e)) {
 		memcpy(out, in, len);
 		return;
 	}
@@ -58,7 +103,7 @@ static void domainname_flip(char *out, const char *in, size_t len)
 	n = in;
 	while (1)
 	{
-		p = n;
+		const char *p = n;
 		STRSEARCH(n, e-p, *n == '.');
 		o -= n-p;
 		memcpy(o, p, n-p);
@@ -92,9 +137,8 @@ PG_FUNCTION_INFO_V1(domainname_read);
 Datum domainname_read(PG_FUNCTION_ARGS);
 Datum domainname_read(PG_FUNCTION_ARGS)
 {
-	text *in = PG_GETARG_TEXT_P(0);
-	text *out = domainname_new(VARDATA(in), VARSIZE_ANY_EXHDR(in));
-	PG_FREE_IF_COPY(in, 0);
+	text *in = PG_GETARG_TEXT_PP(0);
+	text *out = domainname_new(VARDATA_ANY(in), VARSIZE_ANY_EXHDR(in));
 	PG_RETURN_TEXT_P(out);
 }
 
@@ -102,12 +146,11 @@ PG_FUNCTION_INFO_V1(domainname_out);
 Datum domainname_out(PG_FUNCTION_ARGS);
 Datum domainname_out(PG_FUNCTION_ARGS)
 {
-	text *in = PG_GETARG_TEXT_P(0);
+	text *in = PG_GETARG_TEXT_PP(0);
 	size_t len = VARSIZE_ANY_EXHDR(in);
 	char *out = palloc(len+1);
-	domainname_flip(out, VARDATA(in), len);
+	domainname_flip(out, VARDATA_ANY(in), len);
 	out[len] = '\0';
-	PG_FREE_IF_COPY(in, 0);
 	PG_RETURN_CSTRING(out);
 }
 
@@ -115,12 +158,36 @@ PG_FUNCTION_INFO_V1(domainname_show);
 Datum domainname_show(PG_FUNCTION_ARGS);
 Datum domainname_show(PG_FUNCTION_ARGS)
 {
-	text *in = PG_GETARG_TEXT_P(0);
+	text *in = PG_GETARG_TEXT_PP(0);
 	size_t len = VARSIZE_ANY(in);
 	text *out = (text *)palloc(len);
 	SET_VARSIZE(out, len);
-	domainname_flip(VARDATA(out), VARDATA(in), len - VARHDRSZ);
-	PG_FREE_IF_COPY(in, 0);
+	domainname_flip(VARDATA(out), VARDATA_ANY(in), len - VARHDRSZ);
+	PG_RETURN_TEXT_P(out);
+}
+
+PG_FUNCTION_INFO_V1(domainname_cat);
+Datum domainname_cat(PG_FUNCTION_ARGS);
+Datum domainname_cat(PG_FUNCTION_ARGS)
+{
+	text *left = PG_GETARG_TEXT_PP(0);
+	text *right = PG_GETARG_TEXT_PP(1);
+	size_t leftlen = VARSIZE_ANY_EXHDR(left);
+	size_t rightlen = VARSIZE_ANY_EXHDR(right);
+	text *out;
+	char *p;
+	size_t len = VARHDRSZ+leftlen+rightlen;
+	if (leftlen && rightlen)
+		len ++;
+	out = (text *)palloc(len);
+	SET_VARSIZE(out, len);
+	p = VARDATA(out);
+	memcpy(p, VARDATA_ANY(right), rightlen);
+	p += rightlen;
+	if (leftlen && rightlen)
+		*p++ = '.';
+	memcpy(p, VARDATA_ANY(left), leftlen);
+
 	PG_RETURN_TEXT_P(out);
 }
 
@@ -130,8 +197,8 @@ Datum domainname_parents(PG_FUNCTION_ARGS);
 Datum domainname_parents(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
-	text *in = PG_GETARG_TEXT_P(0);
-	const char *s = VARDATA(in);
+	text *in = PG_GETARG_TEXT_PP(0);
+	const char *s = VARDATA_ANY(in);
 	const char *p = s, *e = s + VARSIZE_ANY_EXHDR(in);
 	unsigned i;
 
@@ -153,8 +220,8 @@ PG_FUNCTION_INFO_V1(domainname_parents);
 Datum domainname_parents(PG_FUNCTION_ARGS);
 Datum domainname_parents(PG_FUNCTION_ARGS)
 {
-	text *in = PG_GETARG_TEXT_P(0);
-	const char *s = VARDATA(in);
+	text *in = PG_GETARG_TEXT_PP(0);
+	const char *s = VARDATA_ANY(in);
 	const char *p = s, *e = s + VARSIZE_ANY_EXHDR(in);
 	int nelems = 1;
 	int nbytes = ARR_OVERHEAD_NONULLS(1) + VARHDRSZ;
@@ -191,7 +258,6 @@ Datum domainname_parents(PG_FUNCTION_ARGS)
 		p ++;
 	}
 
-	PG_FREE_IF_COPY(in, 0);
 	PG_RETURN_ARRAYTYPE_P(r);
 }
 #endif
@@ -200,8 +266,8 @@ PG_FUNCTION_INFO_V1(domainname_parts);
 Datum domainname_parts(PG_FUNCTION_ARGS);
 Datum domainname_parts(PG_FUNCTION_ARGS)
 {
-	text *in = PG_GETARG_TEXT_P(0);
-	const char *s = VARDATA(in);
+	text *in = PG_GETARG_TEXT_PP(0);
+	const char *s = VARDATA_ANY(in);
 	const char *b = s, *p = s, *e = s + VARSIZE_ANY_EXHDR(in);
 	int nelems = 0;
 	int nbytes = ARR_OVERHEAD_NONULLS(1);
@@ -238,7 +304,6 @@ Datum domainname_parts(PG_FUNCTION_ARGS)
 		p ++;
 	}
 
-	PG_FREE_IF_COPY(in, 0);
 	PG_RETURN_ARRAYTYPE_P(r);
 }
 
@@ -246,95 +311,106 @@ Datum domainname_parts(PG_FUNCTION_ARGS)
 struct uri_info {
 	const char *scheme;
 	int scheme_len;
+	const char *user;
+	int user_len;
 	const char *host;
 	int host_len;
 	int port;
 	const char *path;
 	int path_len;
+	const char *query;
+	int query_len;
+	const char *fragment;
+	int fragment_len;
 };
-
-#define PORT_LEN	7
-
-static bool isdelim(char c)
-{
-	return c == ':' || c == '/' || c == '@' || c == '?' || c == '#';
-}
 
 static bool uri_parse(const char *str, size_t len, struct uri_info *uri)
 {
-	const char *b, *p = str, *e = str+len, *x;
-#define NEXT(I) ({ \
-		b = p += (I); \
-		STRSEARCH(p, e-p, isdelim(*p)); \
-	})
+	const char *b = str, *p = str, *d, *e = str+len;
 
-	NEXT(0);
-
-	if (p < e && p[0] == ':' && !(
-				(x = strndigit(p+1, MIN(e-p-1,PORT_LEN))) > p+1 && 
-				(x == e || isdelim(*x))))
-	{
+	STRSEARCH(p, e-p, *p == ':' || *p == '/' || *p == '@' || *p == '?' || *p == '#');
+	if (p+2 < e && p[0] == ':' && p[1] == '/' && p[2] == '/') {
 		uri->scheme = b;
 		uri->scheme_len = p-b;
-		NEXT(1);
-	}
-	else
-	{
+		b = p + 3;
+	} else {
 		uri->scheme = NULL;
-		uri->scheme_len = 0;
+		uri->scheme_len = -1;
 	}
 
-	if (p < e-1 && p == b && p[0] == '/' && p[1] == '/')
-		NEXT(2);
+	d = b;
+	STRSEARCH(d, e-d, *d == '/' || *d == '?' || *d == '#');
 
-	if (p < e-1 && *p == '@')
-		NEXT(1);
+	p = memchr(b, '@', d-b);
+	if (p) {
+		uri->user = b;
+		uri->user_len = p-b;
+		b = p+1;
+	} else {
+		uri->user = NULL;
+		uri->user_len = -1;
+	}
 
 	uri->host = b;
-	uri->host_len = p-b;
+	uri->host_len = d-b;
 	uri->port = -1;
 
-	while (p < e-1 && p[0] == ':')
-	{
-		char portbuf[8];
-		unsigned portlen = sizeof(portbuf)-1;
+	p = memrchr(b, ':', d-b);
+	if (p++ && d - p <= 5) {
+		char portbuf[8], *x = portbuf;
+		unsigned long port;
+		memcpy(portbuf, p, d-p);
+		portbuf[d-p] = 0;
 
-		NEXT(1);
-
-		if (p-b < portlen)
-			portlen = p-b;
-		memcpy(portbuf, b, portlen);
-		portbuf[portlen] = 0;
-
-		uri->port = strtoul(portbuf, (char **)&x, 10);
-		if (!*x)
-			break;
-
-		uri->host_len = p-uri->host;
-		uri->port = -1;
+		port = strtoul(portbuf, &x, 10);
+		if (!*x && port <= 65536) {
+			uri->port = port;
+			uri->host_len = p-1-b;
+		}
 	}
 
-	if (p < e)
-	{
-		uri->path = p;
-		uri->path_len = e-p;
-	}
-	else
-	{
+	p = d;
+	if (p < e && *p == '/') {
+		b = p;
+		STRSEARCH(p, e-p, *p == '?' || *p == '#');
+		uri->path = b;
+		uri->path_len = p-b;
+	} else {
 		uri->path = NULL;
-		uri->path_len = 0;
+		uri->path_len = -1;
 	}
 
-#undef NEXT
+	if (p < e && *p == '?') {
+		b = p += 1;
+		STRSEARCH(p, e-p, *p == '#');
+		uri->query = b;
+		uri->query_len = p-b;
+	} else {
+		uri->query = NULL;
+		uri->query_len = -1;
+	}
 
-	return true;
+	if (p < e && *p == '#') {
+		p ++;
+		uri->fragment = p;
+		uri->fragment_len = e-p;
+		p = e;
+	} else {
+		uri->fragment = NULL;
+		uri->fragment_len = -1;
+	}
+
+	return !*p;
 }
 
 enum uri_tuple {
 	URI_HOST = 0,
 	URI_PORT,
 	URI_PATH,
+	URI_QUERY,
+	URI_USER,
 	URI_SCHEME,
+	URI_FRAGMENT,
 
 	URI_LEN
 };
@@ -352,12 +428,18 @@ static HeapTuple uri_new(FunctionCallInfo fcinfo, const char *str, size_t len)
 
 	if (!(n[URI_SCHEME] = !u.scheme))
 		d[URI_SCHEME] = PointerGetDatum(cstring_to_text_with_len(u.scheme, u.scheme_len));
+	if (!(n[URI_USER] = !u.user))
+		d[URI_USER] = PointerGetDatum(cstring_to_text_with_len(u.user, u.user_len));
 	if (!(n[URI_HOST] = !u.host))
 		d[URI_HOST] = PointerGetDatum(domainname_new(u.host, u.host_len));
 	if (!(n[URI_PORT] = u.port < 0))
 		d[URI_PORT] = Int16GetDatum(u.port);
 	if (!(n[URI_PATH] = !u.path))
 		d[URI_PATH] = PointerGetDatum(cstring_to_text_with_len(u.path, u.path_len));
+	if (!(n[URI_QUERY] = !u.query))
+		d[URI_QUERY] = PointerGetDatum(cstring_to_text_with_len(u.query, u.query_len));
+	if (!(n[URI_FRAGMENT] = !u.fragment))
+		d[URI_FRAGMENT] = PointerGetDatum(cstring_to_text_with_len(u.fragment, u.fragment_len));
 	get_call_result_type(fcinfo, NULL, &td);
 	return heap_form_tuple(BlessTupleDesc(td), d, n);
 }
@@ -374,9 +456,8 @@ PG_FUNCTION_INFO_V1(uri_read);
 Datum uri_read(PG_FUNCTION_ARGS);
 Datum uri_read(PG_FUNCTION_ARGS)
 {
-	text *in = PG_GETARG_TEXT_P(0);
-	HeapTuple out = uri_new(fcinfo, VARDATA(in), VARSIZE_ANY_EXHDR(in));
-	PG_FREE_IF_COPY(in, 0);
+	text *in = PG_GETARG_TEXT_PP(0);
+	HeapTuple out = uri_new(fcinfo, VARDATA_ANY(in), VARSIZE_ANY_EXHDR(in));
 	PG_RETURN_DATUM(HeapTupleGetDatum(out));
 }
 
@@ -386,11 +467,11 @@ static void *uri_char(HeapTupleHeader ud, bool hdr, bool term)
 	HeapTupleData tuple;
 	Datum d[URI_LEN];
 	bool n[URI_LEN];
-	text *scheme = NULL, *host = NULL, *path = NULL;
+	text *scheme = NULL, *user = NULL, *host = NULL, *path = NULL, *query = NULL, *fragment = NULL;
 	int16 port;
 	char portbuf[8];
-	unsigned schemelen = 0, hostlen = 0, portlen = 0, pathlen = 0;
-	unsigned len;
+	unsigned schemelen = 0, userlen = 0, hostlen = 0, portlen = 0, pathlen = 0, querylen = 0, fragmentlen = 0;
+	unsigned len = hdr ? VARHDRSZ : 0;
 	void *out;
 	char *p;
 
@@ -405,29 +486,50 @@ static void *uri_char(HeapTupleHeader ud, bool hdr, bool term)
 	if (!n[URI_SCHEME])
 	{
 		scheme = DatumGetTextP(d[URI_SCHEME]);
-		schemelen = VARSIZE_ANY_EXHDR(scheme);
+		len += schemelen = VARSIZE_ANY_EXHDR(scheme);
+		len += 3;
+	}
+	if (!n[URI_USER])
+	{
+		user = DatumGetTextP(d[URI_USER]);
+		len += userlen = VARSIZE_ANY_EXHDR(user);
+		len ++;
 	}
 	if (!n[URI_HOST])
 	{
 		host = DatumGetTextP(d[URI_HOST]);
-		hostlen = VARSIZE_ANY_EXHDR(host);
+		len += hostlen = VARSIZE_ANY_EXHDR(host);
 	}
 	if (!n[URI_PORT])
 	{
 		port = DatumGetInt16(d[URI_PORT]);
-		portlen = snprintf(portbuf, sizeof(portbuf)-1, ":%hu", port);
+		len += portlen = snprintf(portbuf, sizeof(portbuf)-1, ":%hu", port);
 	}
 	if (!n[URI_PATH])
 	{
 		path = DatumGetTextP(d[URI_PATH]);
-		pathlen = VARSIZE_ANY_EXHDR(path);
+		len += pathlen = VARSIZE_ANY_EXHDR(path);
+	}
+	if (!n[URI_QUERY])
+	{
+		query = DatumGetTextP(d[URI_QUERY]);
+		len += querylen = VARSIZE_ANY_EXHDR(query);
+		len ++;
+	}
+	if (!n[URI_FRAGMENT])
+	{
+		fragment = DatumGetTextP(d[URI_FRAGMENT]);
+		len += fragmentlen = VARSIZE_ANY_EXHDR(fragment);
+		len ++;
 	}
 
-	len = (hdr ? VARHDRSZ : 0) + schemelen + (scheme ? 3 : 0) + hostlen + portlen + pathlen + term;
+	len += term;
 	out = palloc(len);
-	if (hdr)
+	if (hdr) {
 		SET_VARSIZE(out, len);
-	p = hdr ? VARDATA(out) : out;
+		p = VARDATA(out);
+	} else
+		p = out;
 
 	if (scheme)
 	{
@@ -436,6 +538,12 @@ static void *uri_char(HeapTupleHeader ud, bool hdr, bool term)
 		*p++ = ':';
 		*p++ = '/';
 		*p++ = '/';
+	}
+	if (user)
+	{
+		memcpy(p, VARDATA(user), userlen);
+		p += userlen;
+		*p++ = '@';
 	}
 	if (host)
 	{
@@ -448,6 +556,18 @@ static void *uri_char(HeapTupleHeader ud, bool hdr, bool term)
 	{
 		memcpy(p, VARDATA(path), pathlen);
 		p += pathlen;
+	}
+	if (query)
+	{
+		*p++ = '?';
+		memcpy(p, VARDATA(query), querylen);
+		p += querylen;
+	}
+	if (fragment)
+	{
+		*p++ = '#';
+		memcpy(p, VARDATA(fragment), fragmentlen);
+		p += fragmentlen;
 	}
 	if (term)
 		*p = '\0';

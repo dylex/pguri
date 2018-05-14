@@ -29,7 +29,7 @@ CREATE OR REPLACE FUNCTION domainname_like(domainname, domainname) RETURNS bool 
 CREATE OR REPLACE FUNCTION domainname_nlike(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'textnlike';
 CREATE OR REPLACE FUNCTION domainname_catraw(domainname, domainname) RETURNS domainname LANGUAGE internal STRICT IMMUTABLE AS 'textcat';
 
-CREATE OR REPLACE FUNCTION domainname_cat(domainname, domainname) RETURNS domainname LANGUAGE SQL STRICT IMMUTABLE AS 'SELECT textcat($1::text, $2::text)::domainname';
+CREATE OR REPLACE FUNCTION domainname_cat(domainname, domainname) RETURNS domainname LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
 CREATE OR REPLACE FUNCTION length(domainname) RETURNS integer LANGUAGE internal STRICT IMMUTABLE AS 'textlen';
 
 CREATE OPERATOR =  (PROCEDURE = domainname_eq, LEFTARG = domainname, RIGHTARG = domainname, COMMUTATOR = '=', NEGATOR = '<>', RESTRICT = eqsel, JOIN = eqjoinsel, MERGES, HASHES);
@@ -59,9 +59,9 @@ CREATE OPERATOR CLASS domainname_ops DEFAULT FOR TYPE domainname USING hash FAMI
 -- CREATE OR REPLACE FUNCTION domainname_parents(domainname) RETURNS SETOF domainname LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
 CREATE OR REPLACE FUNCTION domainname_parents(domainname) RETURNS domainname[] LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
 
-CREATE OR REPLACE FUNCTION domainname_contains(domainname, domainname) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS 
+CREATE OR REPLACE FUNCTION domainname_contains(domainname, domainname) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS
 	$$ SELECT $1 = ANY (domainname_parents($2)) $$;
-CREATE OR REPLACE FUNCTION domainname_contained(domainname, domainname) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS 
+CREATE OR REPLACE FUNCTION domainname_contained(domainname, domainname) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS
 	$$ SELECT $1 = $2 OR $1 LIKE ('%.' || $2) $$;
 
 CREATE OPERATOR @> (LEFTARG = domainname, RIGHTARG = domainname, PROCEDURE = domainname_contains,
@@ -76,7 +76,10 @@ CREATE TYPE uri AS (
 	domain	domainname COLLATE "C",
 	port	SMALLINT,
 	path	TEXT,
-	scheme	TEXT
+	query	TEXT,
+	auth	TEXT,
+	scheme	TEXT,
+	fragment TEXT
 );
 
 CREATE OR REPLACE FUNCTION uri_in(cstring) RETURNS uri  LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
@@ -93,15 +96,21 @@ CREATE OR REPLACE FUNCTION text(uri) RETURNS text LANGUAGE C STRICT IMMUTABLE AS
 --CREATE CAST (uri AS text) WITH FUNCTION text(uri) AS IMPLICIT;
 
 CREATE OR REPLACE FUNCTION uri_contains(uri, uri) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS
-	$$ SELECT ($1.scheme IS NULL OR $1.scheme = $2.scheme) 
-		AND ($1.domain IS NULL OR domainname_contains($1.domain, $2.domain))
-		AND ($1.port IS NULL OR $1.port = $2.port)
-		AND ($1.path IS NULL OR $2.path LIKE ($1.path || '%')) $$;
+	$$ SELECT           ($1.scheme IS NULL OR $1.scheme = $2.scheme)
+		AND         ($1.domain IS NULL OR domainname_contains($1.domain, $2.domain))
+		AND         ($1.port   IS NULL OR $1.port   = $2.port)
+		AND CASE WHEN coalesce($1.path, '/') = coalesce($2.path, '/')
+			THEN $1.query  IS NULL OR $2.query LIKE ($1.query || '%')
+			ELSE $1.path   IS NULL OR $2.path  LIKE ($1.path  || '%')
+		    END $$;
 CREATE OR REPLACE FUNCTION uri_contained(uri, uri) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS
-	$$ SELECT ($2.scheme IS NULL OR $1.scheme = $2.scheme) 
-		AND ($2.domain IS NULL OR domainname_contained($1.domain, $2.domain))
-		AND ($2.port IS NULL OR $1.port = $2.port)
-		AND ($2.path IS NULL OR $1.path LIKE ($2.path || '%')) $$;
+	$$ SELECT           ($2.scheme IS NULL OR $1.scheme = $2.scheme)
+		AND         ($2.domain IS NULL OR domainname_contained($1.domain, $2.domain))
+		AND         ($2.port   IS NULL OR $1.port   = $2.port)
+		AND CASE WHEN coalesce($1.path, '/') = coalesce($2.path, '/')
+			THEN $2.query  IS NULL OR $1.query LIKE ($2.query || '%')
+			ELSE $2.path   IS NULL OR $1.path  LIKE ($2.path  || '%')
+		    END $$;
 
 CREATE OPERATOR @> (LEFTARG = uri, RIGHTARG = uri, PROCEDURE = uri_contains,
 	COMMUTATOR = '<@', RESTRICT = contsel, JOIN = contjoinsel);
