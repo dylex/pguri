@@ -615,7 +615,7 @@ enum token_type {
 };
 
 static const LexDescr token_info[TOKEN_TYPES] = {
-#define E(T, A, D) [TOKEN_##T] = { .lexid = TOKEN_##T, .alias = "uri_" A, .descr = "URI " D }
+#define E(T, A, D) [TOKEN_##T] = { .lexid = TOKEN_##T, .alias = A, .descr = D }
 	E(SCHEME           , "scheme"           , "scheme"                ),
 	E(USERINFO         , "userinfo"         , "user auth info"        ),
 	E(DOMAIN           , "domain"           , "full domainname"       ),
@@ -791,6 +791,40 @@ Datum uri_tsparser_end(PG_FUNCTION_ARGS)
 
 	pfree(tsp);
 	PG_RETURN_VOID();
+}
+
+static int xdigit(char c) {
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return 10 + c - 'a';
+	if (c >= 'A' && c <= 'F')
+		return 10 + c - 'A';
+	return -1;
+}
+
+PG_FUNCTION_INFO_V1(uri_lexize_decode);
+Datum uri_lexize_decode(PG_FUNCTION_ARGS) {
+	char *src = (char *)PG_GETARG_POINTER(1);
+	int len = PG_GETARG_INT32(2);
+	char *end = src+len;
+	TSLexeme *res;
+	char *p;
+	int x1, x2;
+
+	res = palloc0(sizeof(TSLexeme)*2);
+	res->flags = TSL_FILTER;
+	res->lexeme = p = palloc0(len+1);
+
+	while (src < end) {
+		if (*src == '%' && src + 2 < end && (x1 = xdigit(src[1])) >= 0 && (x2 = xdigit(src[2])) >= 0) {
+			*p++ = (x1<<4)|x2;
+			src += 3;
+		} else
+			*p++ = *src++;
+	}
+
+	PG_RETURN_POINTER(res);
 }
 
 void _PG_init(void);

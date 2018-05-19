@@ -1,9 +1,9 @@
 CREATE TYPE domainname;
 
-CREATE OR REPLACE FUNCTION domainname_in(cstring) 	RETURNS domainname LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
-CREATE OR REPLACE FUNCTION domainname_out(domainname) 	RETURNS cstring    LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
-CREATE OR REPLACE FUNCTION domainname_recv(internal) 	RETURNS domainname LANGUAGE internal STRICT IMMUTABLE AS 'textsend';
-CREATE OR REPLACE FUNCTION domainname_send(domainname) 	RETURNS bytea 	   LANGUAGE internal STRICT IMMUTABLE AS 'textrecv';
+CREATE OR REPLACE FUNCTION domainname_in(cstring) 	RETURNS domainname LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION domainname_out(domainname) 	RETURNS cstring    LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION domainname_recv(internal) 	RETURNS domainname LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'textsend';
+CREATE OR REPLACE FUNCTION domainname_send(domainname) 	RETURNS bytea 	   LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'textrecv';
 
 CREATE TYPE domainname (LIKE = text,
 	INPUT = domainname_in, OUTPUT = domainname_out,
@@ -14,23 +14,23 @@ CREATE TYPE domainname (LIKE = text,
 --CREATE CAST (text AS domainname) WITHOUT FUNCTION;
 --CREATE CAST (domainname AS text) WITHOUT FUNCTION;
 
-CREATE OR REPLACE FUNCTION text_domainname(text) RETURNS domainname LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME','unsafe_cast';
-CREATE OR REPLACE FUNCTION domainname_text(domainname) RETURNS text LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME','unsafe_cast';
+CREATE OR REPLACE FUNCTION text_domainname(text) RETURNS domainname LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME','unsafe_cast';
+CREATE OR REPLACE FUNCTION domainname_text(domainname) RETURNS text LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME','unsafe_cast';
 
-CREATE OR REPLACE FUNCTION domainname_eq(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'texteq';
-CREATE OR REPLACE FUNCTION domainname_ne(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'textne';
-CREATE OR REPLACE FUNCTION domainname_lt(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'text_lt';
-CREATE OR REPLACE FUNCTION domainname_le(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'text_le';
-CREATE OR REPLACE FUNCTION domainname_gt(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'text_gt';
-CREATE OR REPLACE FUNCTION domainname_ge(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'text_ge';
-CREATE OR REPLACE FUNCTION domainname_cmp(domainname, domainname) RETURNS int LANGUAGE internal STRICT IMMUTABLE AS 'bttextcmp';
-CREATE OR REPLACE FUNCTION domainname_hash(domainname) RETURNS int LANGUAGE internal STRICT IMMUTABLE AS 'hashtext';
-CREATE OR REPLACE FUNCTION domainname_like(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'textlike';
-CREATE OR REPLACE FUNCTION domainname_nlike(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE AS 'textnlike';
-CREATE OR REPLACE FUNCTION domainname_catraw(domainname, domainname) RETURNS domainname LANGUAGE internal STRICT IMMUTABLE AS 'textcat';
+CREATE OR REPLACE FUNCTION domainname_eq(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'texteq';
+CREATE OR REPLACE FUNCTION domainname_ne(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'textne';
+CREATE OR REPLACE FUNCTION domainname_lt(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'text_lt';
+CREATE OR REPLACE FUNCTION domainname_le(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'text_le';
+CREATE OR REPLACE FUNCTION domainname_gt(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'text_gt';
+CREATE OR REPLACE FUNCTION domainname_ge(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'text_ge';
+CREATE OR REPLACE FUNCTION domainname_cmp(domainname, domainname) RETURNS int LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'bttextcmp';
+CREATE OR REPLACE FUNCTION domainname_hash(domainname) RETURNS int LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'hashtext';
+CREATE OR REPLACE FUNCTION domainname_like(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'textlike';
+CREATE OR REPLACE FUNCTION domainname_nlike(domainname, domainname) RETURNS bool LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'textnlike';
+CREATE OR REPLACE FUNCTION domainname_catraw(domainname, domainname) RETURNS domainname LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'textcat';
 
-CREATE OR REPLACE FUNCTION domainname_cat(domainname, domainname) RETURNS domainname LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
-CREATE OR REPLACE FUNCTION length(domainname) RETURNS integer LANGUAGE internal STRICT IMMUTABLE AS 'textlen';
+CREATE OR REPLACE FUNCTION domainname_cat(domainname, domainname) RETURNS domainname LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION length(domainname) RETURNS integer LANGUAGE internal STRICT IMMUTABLE PARALLEL SAFE AS 'textlen';
 
 CREATE OPERATOR =  (PROCEDURE = domainname_eq, LEFTARG = domainname, RIGHTARG = domainname, COMMUTATOR = '=', NEGATOR = '<>', RESTRICT = eqsel, JOIN = eqjoinsel, MERGES, HASHES);
 CREATE OPERATOR <> (PROCEDURE = domainname_ne, LEFTARG = domainname, RIGHTARG = domainname, COMMUTATOR = '<>', NEGATOR = '=', RESTRICT = neqsel, JOIN = neqjoinsel);
@@ -56,8 +56,8 @@ CREATE OPERATOR CLASS domainname_ops DEFAULT FOR TYPE domainname USING hash FAMI
 	OPERATOR 1 = ,
 	FUNCTION 1 domainname_hash(domainname);
 
--- CREATE OR REPLACE FUNCTION domainname_parents(domainname) RETURNS SETOF domainname LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
-CREATE OR REPLACE FUNCTION domainname_parents(domainname) RETURNS domainname[] LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
+-- CREATE OR REPLACE FUNCTION domainname_parents(domainname) RETURNS SETOF domainname LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION domainname_parents(domainname) RETURNS domainname[] LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME';
 
 CREATE OR REPLACE FUNCTION domainname_contains(domainname, domainname) RETURNS bool LANGUAGE SQL STRICT IMMUTABLE AS
 	$$ SELECT $1 = ANY (domainname_parents($2)) $$;
@@ -69,7 +69,7 @@ CREATE OPERATOR @> (LEFTARG = domainname, RIGHTARG = domainname, PROCEDURE = dom
 CREATE OPERATOR <@ (LEFTARG = domainname, RIGHTARG = domainname, PROCEDURE = domainname_contained,
 	COMMUTATOR = '@>', RESTRICT = contsel, JOIN = contjoinsel);
 
-CREATE OR REPLACE FUNCTION domainname_parts(domainname) RETURNS text[] LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION domainname_parts(domainname) RETURNS text[] LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME';
 
 
 CREATE TYPE uri AS (
@@ -82,15 +82,15 @@ CREATE TYPE uri AS (
 	fragment TEXT
 );
 
-CREATE OR REPLACE FUNCTION uri_in(cstring) RETURNS uri  LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
-CREATE OR REPLACE FUNCTION uri_out(uri) RETURNS cstring LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION uri_in(cstring) RETURNS uri  LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION uri_out(uri) RETURNS cstring LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME';
 
 -- hack!
 UPDATE pg_type SET typinput  = 'uri_in'  WHERE typname = 'uri';
 UPDATE pg_type SET typoutput = 'uri_out' WHERE typname = 'uri';
 
-CREATE OR REPLACE FUNCTION uri(text) RETURNS uri  LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME','uri_read';
-CREATE OR REPLACE FUNCTION text(uri) RETURNS text LANGUAGE C STRICT IMMUTABLE AS 'MODULE_PATHNAME','uri_show';
+CREATE OR REPLACE FUNCTION uri(text) RETURNS uri  LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME','uri_read';
+CREATE OR REPLACE FUNCTION text(uri) RETURNS text LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE AS 'MODULE_PATHNAME','uri_show';
 
 --CREATE CAST (text AS uri) WITH FUNCTION uri(text) AS IMPLICIT;
 --CREATE CAST (uri AS text) WITH FUNCTION text(uri) AS IMPLICIT;
@@ -118,20 +118,38 @@ CREATE OPERATOR <@ (LEFTARG = uri, RIGHTARG = uri, PROCEDURE = uri_contained,
 	COMMUTATOR = '@>', RESTRICT = contsel, JOIN = contjoinsel);
 
 
-CREATE OR REPLACE FUNCTION uri_tsparser_start(internal, int4) RETURNS internal AS 'MODULE_PATHNAME' LANGUAGE C STRICT;
-CREATE OR REPLACE FUNCTION uri_tsparser_nexttoken(internal, internal, internal) RETURNS internal AS 'MODULE_PATHNAME' LANGUAGE C STRICT;
-CREATE OR REPLACE FUNCTION uri_tsparser_end(internal) RETURNS void AS 'MODULE_PATHNAME' LANGUAGE C STRICT;
-CREATE OR REPLACE FUNCTION uri_tsparser_lextype(internal) RETURNS internal AS 'MODULE_PATHNAME' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION uri_tsparser_start(internal, int4) RETURNS internal LANGUAGE C PARALLEL SAFE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION uri_tsparser_nexttoken(internal, internal, internal) RETURNS internal LANGUAGE C PARALLEL SAFE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION uri_tsparser_end(internal) RETURNS void LANGUAGE C PARALLEL SAFE AS 'MODULE_PATHNAME';
+CREATE OR REPLACE FUNCTION uri_tsparser_lextype(internal) RETURNS internal LANGUAGE C PARALLEL SAFE AS 'MODULE_PATHNAME';
 
-CREATE TEXT SEARCH PARSER uri_tsparser (
+CREATE TEXT SEARCH PARSER uri (
 	START    = uri_tsparser_start,
 	GETTOKEN = uri_tsparser_nexttoken,
 	END      = uri_tsparser_end,
 	LEXTYPES = uri_tsparser_lextype
 );
 
-COMMENT ON TEXT SEARCH PARSER uri_tsparser IS 'text search parser for uris';
+COMMENT ON TEXT SEARCH PARSER uri IS 'text search parser for uris';
 
-CREATE TEXT SEARCH CONFIGURATION uri_ts (
-	PARSER = uri_tsparser
+CREATE OR REPLACE FUNCTION uri_lexize_decode(internal,internal,internal,internal) RETURNS internal LANGUAGE C PARALLEL SAFE AS 'MODULE_PATHNAME';
+
+CREATE TEXT SEARCH TEMPLATE uri_decode (
+	LEXIZE = uri_lexize_decode
 );
+CREATE TEXT SEARCH DICTIONARY uri_decode (
+	TEMPLATE = uri_decode
+);
+
+CREATE TEXT SEARCH CONFIGURATION uri (
+	PARSER = uri
+);
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR userinfo         WITH             simple;
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR domain           WITH             simple;
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR domain_component WITH uri_decode, simple;
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR port             WITH             simple;
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR path             WITH             simple;
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR path_segment     WITH uri_decode, simple;
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR query_parameter  WITH uri_decode, simple;
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR query_value      WITH uri_decode, simple;
+ALTER TEXT SEARCH CONFIGURATION uri ADD MAPPING FOR fragment         WITH uri_decode, simple;
