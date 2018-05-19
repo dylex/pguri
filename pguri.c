@@ -9,6 +9,7 @@
 #include <utils/array.h>
 #include <utils/typcache.h>
 #include <server/access/htup_details.h>
+#include <server/tsearch/ts_public.h>
 
 PG_MODULE_MAGIC;
 
@@ -22,7 +23,7 @@ Datum unsafe_cast(PG_FUNCTION_ARGS)
 #define MIN(A, B) ((B) < (A) ? (B) : (A))
 
 #define STRSEARCH(STR, LEN, P) ({ \
-		typeof(LEN) _len = LEN; \
+		unsigned _len = LEN; \
 		while (_len-- && !(P)) STR ++; \
 		STR; \
 	})
@@ -315,7 +316,9 @@ struct uri_info {
 	int user_len;
 	const char *host;
 	int host_len;
-	int port;
+	const char *port;
+	int port_len;
+	int port_val;
 	const char *path;
 	int path_len;
 	const char *query;
@@ -324,7 +327,7 @@ struct uri_info {
 	int fragment_len;
 };
 
-static bool uri_parse(const char *str, size_t len, struct uri_info *uri)
+static void uri_parse(const char *str, size_t len, struct uri_info *uri)
 {
 	const char *b = str, *p = str, *d, *e = str+len;
 
@@ -353,18 +356,22 @@ static bool uri_parse(const char *str, size_t len, struct uri_info *uri)
 
 	uri->host = b;
 	uri->host_len = d-b;
-	uri->port = -1;
+	uri->port = NULL;
+	uri->port_len = -1;
+	uri->port_val = -1;
 
 	p = memrchr(b, ':', d-b);
 	if (p++ && d - p <= 5) {
-		char portbuf[8], *x = portbuf;
+		char portbuf[6], *x = portbuf;
 		unsigned long port;
 		memcpy(portbuf, p, d-p);
 		portbuf[d-p] = 0;
 
 		port = strtoul(portbuf, &x, 10);
 		if (!*x && port <= 65536) {
-			uri->port = port;
+			uri->port = p;
+			uri->port_len = d-p;
+			uri->port_val = port;
 			uri->host_len = p-1-b;
 		}
 	}
@@ -400,7 +407,9 @@ static bool uri_parse(const char *str, size_t len, struct uri_info *uri)
 		uri->fragment_len = -1;
 	}
 
-	return !*p;
+	if (p < e)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("invalid uri: \"%.*s\"", (int)len, str)));
 }
 
 enum uri_tuple {
@@ -422,9 +431,7 @@ static HeapTuple uri_new(FunctionCallInfo fcinfo, const char *str, size_t len)
 	Datum d[URI_LEN];
 	bool n[URI_LEN];
 
-	if (!uri_parse(str, len, &u))
-		ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					errmsg("invalid uri: \"%.*s\"", (int)len, str)));
+	uri_parse(str, len, &u);
 
 	if (!(n[URI_SCHEME] = !u.scheme))
 		d[URI_SCHEME] = PointerGetDatum(cstring_to_text_with_len(u.scheme, u.scheme_len));
@@ -432,8 +439,8 @@ static HeapTuple uri_new(FunctionCallInfo fcinfo, const char *str, size_t len)
 		d[URI_USER] = PointerGetDatum(cstring_to_text_with_len(u.user, u.user_len));
 	if (!(n[URI_HOST] = !u.host))
 		d[URI_HOST] = PointerGetDatum(domainname_new(u.host, u.host_len));
-	if (!(n[URI_PORT] = u.port < 0))
-		d[URI_PORT] = Int16GetDatum(u.port);
+	if (!(n[URI_PORT] = u.port_val < 0))
+		d[URI_PORT] = Int16GetDatum(u.port_val);
 	if (!(n[URI_PATH] = !u.path))
 		d[URI_PATH] = PointerGetDatum(cstring_to_text_with_len(u.path, u.path_len));
 	if (!(n[URI_QUERY] = !u.query))
@@ -589,6 +596,201 @@ Datum uri_show(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader ud = PG_GETARG_HEAPTUPLEHEADER(0);
 	PG_RETURN_TEXT_P(uri_char(ud, 1, 0));
+}
+
+enum token_type {
+	TOKEN_NONE = 0,
+	TOKEN_SCHEME,
+	TOKEN_USERINFO,
+	TOKEN_DOMAIN,
+	TOKEN_DOMAIN_COMPONENT,
+	TOKEN_PORT,
+	TOKEN_PATH,
+	TOKEN_PATH_SEGMENT,
+	TOKEN_QUERY_PARAMETER,
+	TOKEN_QUERY_VALUE,
+	TOKEN_FRAGMENT,
+
+	TOKEN_TYPES
+};
+
+static const LexDescr token_info[TOKEN_TYPES] = {
+#define E(T, A, D) [TOKEN_##T] = { .lexid = TOKEN_##T, .alias = "uri_" A, .descr = "URI " D }
+	E(SCHEME           , "scheme"           , "scheme"                ),
+	E(USERINFO         , "userinfo"         , "user auth info"        ),
+	E(DOMAIN           , "domain"           , "full domainname"       ),
+	E(DOMAIN_COMPONENT , "domain_component" , "domain host component" ),
+	E(PORT             , "port"             , "port (digits)"         ),
+	E(PATH             , "path"             , "full path"             ),
+	E(PATH_SEGMENT     , "path_segment"     , "path segment"          ),
+	E(QUERY_PARAMETER  , "query_parameter"  , "query parameter name"  ),
+	E(QUERY_VALUE      , "query_value"      , "query parameter value" ),
+	E(FRAGMENT         , "fragment"         , "fragment value"        ),
+#undef E
+};
+
+struct tsparser {
+	char *str;
+	int len;
+	struct uri_info uri;
+
+	enum token_type type;
+	const char *p, *e;
+};
+
+static struct tsparser *tsparser_init(char *str, int len) {
+	struct tsparser *tsp = (struct tsparser *)palloc0(sizeof(struct tsparser));
+
+	tsp->str = str;
+	tsp->len = len;
+	uri_parse(str, len, &tsp->uri);
+
+	return tsp;
+}
+
+PG_FUNCTION_INFO_V1(uri_tsparser_lextype);
+Datum uri_tsparser_lextype(PG_FUNCTION_ARGS)
+{
+	LexDescr *descr = (LexDescr *)palloc(sizeof(LexDescr) * TOKEN_TYPES);
+	int i;
+
+	for (i = 1; i < TOKEN_TYPES; i++)
+	{
+		descr[i-1].lexid = token_info[i].lexid;
+		descr[i-1].alias = pstrdup(token_info[i].alias);
+		descr[i-1].descr = pstrdup(token_info[i].descr);
+	}
+
+	descr[i-1].lexid = 0;
+
+	PG_RETURN_POINTER(descr);
+}
+
+PG_FUNCTION_INFO_V1(uri_tsparser_start);
+Datum uri_tsparser_start(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_POINTER(tsparser_init((char *)PG_GETARG_POINTER(0), PG_GETARG_INT32(1)));
+}
+
+PG_FUNCTION_INFO_V1(uri_tsparser_nexttoken);
+Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
+{
+	struct tsparser *tsp = (struct tsparser *)PG_GETARG_POINTER(0);
+	char **tok = (char **)PG_GETARG_POINTER(1);
+	int *toklen = (int *)PG_GETARG_POINTER(2);
+
+#define GOT(T, P, L) ({ \
+		*tok = (char *)P; \
+		*toklen = L; \
+		PG_RETURN_INT32(TOKEN_##T); \
+	})
+
+	switch (tsp->type) {
+		case TOKEN_NONE:
+			tsp->type ++;
+
+		case TOKEN_SCHEME:
+			tsp->type ++;
+			if (tsp->uri.scheme_len > 0)
+				GOT(SCHEME, tsp->uri.scheme, tsp->uri.scheme_len);
+
+		case TOKEN_USERINFO:
+			tsp->type ++;
+			if (tsp->uri.user_len > 0)
+				GOT(USERINFO, tsp->uri.user, tsp->uri.user_len);
+
+		case TOKEN_DOMAIN:
+			tsp->type ++;
+			if (!tsp->p && tsp->uri.host_len > 0) {
+				tsp->p = tsp->uri.host;
+				tsp->e = tsp->uri.host+tsp->uri.host_len;
+			}
+
+			if (tsp->p < tsp->e)
+				GOT(DOMAIN, tsp->p, tsp->e-tsp->p);
+
+		case TOKEN_DOMAIN_COMPONENT:
+			tsp->type ++;
+			if (tsp->p < tsp->e && *tsp->p != '[') {
+				char *e = memchr(tsp->p, '.', tsp->e-tsp->p);
+				if (e) {
+					const char *p = tsp->p;
+					tsp->type = TOKEN_DOMAIN;
+					tsp->p = e+1;
+					GOT(DOMAIN_COMPONENT, p, e-p);
+				}
+			}
+			tsp->p = tsp->e = NULL;
+
+		case TOKEN_PORT:
+			tsp->type ++;
+			if (tsp->uri.port_len > 0)
+				GOT(PORT, tsp->uri.port, tsp->uri.port_len);
+
+		case TOKEN_PATH:
+			tsp->type ++;
+			if (tsp->uri.path_len > 0) {
+				tsp->p = tsp->uri.path;
+				tsp->e = tsp->uri.path+tsp->uri.path_len;
+				if (*tsp->p == '/')
+					tsp->p ++;
+				GOT(PATH, tsp->uri.path, tsp->uri.path_len);
+			}
+
+		case TOKEN_PATH_SEGMENT:
+			tsp->type ++;
+			if (tsp->p < tsp->e) {
+				const char *p = tsp->p, *e = tsp->p;
+				STRSEARCH(e, tsp->e-e, *e == '/');
+				tsp->type = TOKEN_PATH_SEGMENT;
+				tsp->p = e+1;
+				GOT(PATH_SEGMENT, p, e-p);
+			}
+
+			tsp->p = tsp->uri.query;
+			tsp->e = tsp->uri.query_len >= 0 ? tsp->uri.query+tsp->uri.query_len : NULL;
+		case TOKEN_QUERY_PARAMETER:
+			tsp->type ++;
+			if (tsp->p < tsp->e) {
+				const char *p = tsp->p, *e = tsp->p;
+				STRSEARCH(e, tsp->e-e, *e == '=' || *e == '&' || *e == ';');
+				tsp->p = e+1;
+				if (e < tsp->e && *e != '=')
+					tsp->type = TOKEN_QUERY_PARAMETER;
+				GOT(QUERY_PARAMETER, p, e-p);
+			}
+
+		case TOKEN_QUERY_VALUE:
+			tsp->type ++;
+			if (tsp->p < tsp->e) {
+				const char *p = tsp->p, *e = tsp->p;
+				STRSEARCH(e, tsp->e-e, *e == '&' || *e == ';');
+				tsp->p = e+1;
+				if (e < tsp->e)
+					tsp->type = TOKEN_QUERY_PARAMETER;
+				if (e <= tsp->e)
+					GOT(QUERY_VALUE, p, e-p);
+			}
+
+		case TOKEN_FRAGMENT:
+			tsp->type ++;
+			if (tsp->uri.fragment_len > 0)
+				GOT(FRAGMENT, tsp->uri.fragment, tsp->uri.fragment_len);
+
+		case TOKEN_TYPES:
+			PG_RETURN_INT32(0);
+	}
+
+	PG_RETURN_INT32(tsp->type);
+}
+
+PG_FUNCTION_INFO_V1(uri_tsparser_end);
+Datum uri_tsparser_end(PG_FUNCTION_ARGS)
+{
+	struct tsparser *tsp = (struct tsparser *)PG_GETARG_POINTER(0);
+
+	pfree(tsp);
+	PG_RETURN_VOID();
 }
 
 void _PG_init(void);

@@ -117,3 +117,21 @@ CREATE OPERATOR @> (LEFTARG = uri, RIGHTARG = uri, PROCEDURE = uri_contains,
 CREATE OPERATOR <@ (LEFTARG = uri, RIGHTARG = uri, PROCEDURE = uri_contained,
 	COMMUTATOR = '@>', RESTRICT = contsel, JOIN = contjoinsel);
 
+
+CREATE OR REPLACE FUNCTION uri_tsparser_start(internal, int4) RETURNS internal AS 'MODULE_PATHNAME' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION uri_tsparser_nexttoken(internal, internal, internal) RETURNS internal AS 'MODULE_PATHNAME' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION uri_tsparser_end(internal) RETURNS void AS 'MODULE_PATHNAME' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION uri_tsparser_lextype(internal) RETURNS internal AS 'MODULE_PATHNAME' LANGUAGE C STRICT;
+
+CREATE TEXT SEARCH PARSER uri_tsparser (
+	START    = uri_tsparser_start,
+	GETTOKEN = uri_tsparser_nexttoken,
+	END      = uri_tsparser_end,
+	LEXTYPES = uri_tsparser_lextype
+);
+
+COMMENT ON TEXT SEARCH PARSER uri_tsparser IS 'text search parser for uris';
+
+CREATE TEXT SEARCH CONFIGURATION uri_ts (
+	PARSER = uri_tsparser
+);
