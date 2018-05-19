@@ -1,0 +1,5 @@
+# pg_tsparser extension
+comment = 'uri and domainname parsing, types, and search'
+default_version = '1.0'
+module_pathname = '$libdir/pguri'
+relocatable = true
