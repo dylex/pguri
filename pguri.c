@@ -764,10 +764,18 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 			tsp->type ++;
 			if (tsp->p < tsp->e) {
 				const char *p = tsp->p, *e = tsp->p;
-				STRSEARCH(e, tsp->e-e, *e == '&' || *e == ';');
+				STRSEARCH(e, tsp->e-e, *e == '+' || (*e == '%' && e+2 < tsp->e && e[1] == '2' && e[2] == '0') || *e == '&' || *e == ';');
 				tsp->p = e+1;
-				if (e < tsp->e)
-					tsp->type = TOKEN_QUERY_PARAMETER;
+				if (e < tsp->e) {
+					if (*e == '+')
+						tsp->type = TOKEN_QUERY_VALUE;
+					else if (*e == '%' && e+2 < tsp->e) {
+						tsp->p += 2;
+						tsp->type = TOKEN_QUERY_VALUE;
+					}
+					else
+						tsp->type = TOKEN_QUERY_PARAMETER;
+				}
 				if (e <= tsp->e)
 					GOT(QUERY_VALUE, p, e-p);
 			}
@@ -820,6 +828,9 @@ Datum uri_lexize_decode(PG_FUNCTION_ARGS) {
 		if (*src == '%' && src + 2 < end && (x1 = xdigit(src[1])) >= 0 && (x2 = xdigit(src[2])) >= 0) {
 			*p++ = (x1<<4)|x2;
 			src += 3;
+		} else if (*src == '+') {
+			*p++ = ' ';
+			src ++;
 		} else
 			*p++ = *src++;
 	}
