@@ -28,6 +28,33 @@ Datum unsafe_cast(PG_FUNCTION_ARGS)
 		STR; \
 	})
 
+static int xdigit(char c) {
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return 10 + c - 'a';
+	if (c >= 'A' && c <= 'F')
+		return 10 + c - 'A';
+	return -1;
+}
+
+static inline int decode_char(const char **p, const char *e) {
+	char c;
+	int x1, x2;
+
+	if (*p >= e)
+		return -1;
+	c = *(*p)++;
+
+	if (c == '%' && *p+1 < e && (x1 = xdigit((*p)[0])) >= 0 && (x2 = xdigit((*p)[1])) >= 0) {
+		*p += 2;
+		return (x1<<4)|x2;
+	}
+	if (c == '+')
+		return ' ';
+	return c;
+}
+
 static const char *skip_octet(const char *p, const char *e)
 {
 	if (p >= e)
@@ -610,9 +637,12 @@ enum token_type {
 	TOKEN_QUERY_PARAMETER,
 	TOKEN_QUERY_VALUE,
 	TOKEN_FRAGMENT,
+	TOKEN_WORD,
 
 	TOKEN_TYPES
 };
+
+#define MINWORDLEN 4
 
 static const LexDescr token_info[TOKEN_TYPES] = {
 #define E(T, A, D) [TOKEN_##T] = { .lexid = TOKEN_##T, .alias = A, .descr = D }
@@ -626,6 +656,7 @@ static const LexDescr token_info[TOKEN_TYPES] = {
 	E(QUERY_PARAMETER  , "query_parameter"  , "query parameter name"  ),
 	E(QUERY_VALUE      , "query_value"      , "query parameter value" ),
 	E(FRAGMENT         , "fragment"         , "fragment value"        ),
+	E(WORD             , "word"             , "word (embedded letter sequence)"),
 #undef E
 };
 
@@ -696,16 +727,14 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 
 		case TOKEN_USERINFO:
 			tsp->type ++;
+			/* setup for DOMAIN */
+			tsp->p = tsp->uri.host;
+			tsp->e = tsp->uri.host_len > 0 ? tsp->uri.host+tsp->uri.host_len : NULL;
 			if (tsp->uri.user_len > 0)
 				GOT(USERINFO, tsp->uri.user, tsp->uri.user_len);
 
 		case TOKEN_DOMAIN:
 			tsp->type ++;
-			if (!tsp->p && tsp->uri.host_len > 0) {
-				tsp->p = tsp->uri.host;
-				tsp->e = tsp->uri.host+tsp->uri.host_len;
-			}
-
 			if (tsp->p < tsp->e)
 				GOT(DOMAIN, tsp->p, tsp->e-tsp->p);
 
@@ -764,26 +793,32 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 			tsp->type ++;
 			if (tsp->p < tsp->e) {
 				const char *p = tsp->p, *e = tsp->p;
-				STRSEARCH(e, tsp->e-e, *e == '+' || (*e == '%' && e+2 < tsp->e && e[1] == '2' && e[2] == '0') || *e == '&' || *e == ';');
+				STRSEARCH(e, tsp->e-e, *e == '&' || *e == ';');
 				tsp->p = e+1;
-				if (e < tsp->e) {
-					if (*e == '+')
-						tsp->type = TOKEN_QUERY_VALUE;
-					else if (*e == '%' && e+2 < tsp->e) {
-						tsp->p += 2;
-						tsp->type = TOKEN_QUERY_VALUE;
-					}
-					else
-						tsp->type = TOKEN_QUERY_PARAMETER;
-				}
+				tsp->type = TOKEN_QUERY_PARAMETER;
 				if (e <= tsp->e)
 					GOT(QUERY_VALUE, p, e-p);
 			}
 
 		case TOKEN_FRAGMENT:
 			tsp->type ++;
+			/* setup for WORD */
+			tsp->p = tsp->uri.host;
+			tsp->e = tsp->str+tsp->len;
 			if (tsp->uri.fragment_len > 0)
 				GOT(FRAGMENT, tsp->uri.fragment, tsp->uri.fragment_len);
+
+		case TOKEN_WORD:
+			while (tsp->p < tsp->e) {
+				const char *p = tsp->p, *e;
+				int n = 0;
+				while (isalpha(decode_char(&tsp->p, tsp->e))) {
+					e = tsp->p;
+					n ++;
+				}
+				if (n >= MINWORDLEN)
+					GOT(WORD, p, e-p);
+			}
 
 		case TOKEN_TYPES:
 			PG_RETURN_INT32(0);
@@ -801,38 +836,23 @@ Datum uri_tsparser_end(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
-static int xdigit(char c) {
-	if (c >= '0' && c <= '9')
-		return c - '0';
-	if (c >= 'a' && c <= 'f')
-		return 10 + c - 'a';
-	if (c >= 'A' && c <= 'F')
-		return 10 + c - 'A';
-	return -1;
-}
-
 PG_FUNCTION_INFO_V1(uri_lexize_decode);
 Datum uri_lexize_decode(PG_FUNCTION_ARGS) {
-	char *src = (char *)PG_GETARG_POINTER(1);
+	const char *src = (char *)PG_GETARG_POINTER(1);
 	int len = PG_GETARG_INT32(2);
-	char *end = src+len;
-	TSLexeme *res;
-	char *p;
-	int x1, x2;
+	const char *p = src, *e = src+len;
+	TSLexeme *res = NULL;
+	char *dst, *d;
+	int c;
 
-	res = palloc0(sizeof(TSLexeme)*2);
-	res->flags = TSL_FILTER;
-	res->lexeme = p = palloc0(len+1);
+	d = dst = palloc0(len+1);
+	while ((c = decode_char(&p, e)) >= 0)
+		*d++ = c;
 
-	while (src < end) {
-		if (*src == '%' && src + 2 < end && (x1 = xdigit(src[1])) >= 0 && (x2 = xdigit(src[2])) >= 0) {
-			*p++ = (x1<<4)|x2;
-			src += 3;
-		} else if (*src == '+') {
-			*p++ = ' ';
-			src ++;
-		} else
-			*p++ = *src++;
+	if (memcmp(dst, src, len)) {
+		res = palloc0(sizeof(TSLexeme)*2);
+		res->flags = TSL_FILTER;
+		res->lexeme = dst;
 	}
 
 	PG_RETURN_POINTER(res);
