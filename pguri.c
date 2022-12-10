@@ -8,8 +8,8 @@
 #include <utils/builtins.h>
 #include <utils/array.h>
 #include <utils/typcache.h>
-#include <server/access/htup_details.h>
-#include <server/tsearch/ts_public.h>
+#include <access/htup_details.h>
+#include <tsearch/ts_public.h>
 
 PG_MODULE_MAGIC;
 
