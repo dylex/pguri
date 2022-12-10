@@ -720,11 +720,13 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 		case TOKEN_NONE:
 			tsp->type ++;
 
+			/* FALLTHRU */
 		case TOKEN_SCHEME:
 			tsp->type ++;
 			if (tsp->uri.scheme_len > 0)
 				GOT(SCHEME, tsp->uri.scheme, tsp->uri.scheme_len);
 
+			/* FALLTHRU */
 		case TOKEN_USERINFO:
 			tsp->type ++;
 			/* setup for DOMAIN */
@@ -733,11 +735,13 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 			if (tsp->uri.user_len > 0)
 				GOT(USERINFO, tsp->uri.user, tsp->uri.user_len);
 
+			/* FALLTHRU */
 		case TOKEN_DOMAIN:
 			tsp->type ++;
 			if (tsp->p < tsp->e)
 				GOT(DOMAIN, tsp->p, tsp->e-tsp->p);
 
+			/* FALLTHRU */
 		case TOKEN_DOMAIN_COMPONENT:
 			tsp->type ++;
 			if (tsp->p < tsp->e && *tsp->p != '[') {
@@ -751,11 +755,13 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 			}
 			tsp->p = tsp->e = NULL;
 
+			/* FALLTHRU */
 		case TOKEN_PORT:
 			tsp->type ++;
 			if (tsp->uri.port_len > 0)
 				GOT(PORT, tsp->uri.port, tsp->uri.port_len);
 
+			/* FALLTHRU */
 		case TOKEN_PATH:
 			tsp->type ++;
 			if (tsp->uri.path_len > 0) {
@@ -766,6 +772,7 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 				GOT(PATH, tsp->uri.path, tsp->uri.path_len);
 			}
 
+			/* FALLTHRU */
 		case TOKEN_PATH_SEGMENT:
 			tsp->type ++;
 			if (tsp->p < tsp->e) {
@@ -778,6 +785,7 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 
 			tsp->p = tsp->uri.query;
 			tsp->e = tsp->uri.query_len >= 0 ? tsp->uri.query+tsp->uri.query_len : NULL;
+			/* FALLTHRU */
 		case TOKEN_QUERY_PARAMETER:
 			tsp->type ++;
 			if (tsp->p < tsp->e) {
@@ -789,6 +797,7 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 				GOT(QUERY_PARAMETER, p, e-p);
 			}
 
+			/* FALLTHRU */
 		case TOKEN_QUERY_VALUE:
 			tsp->type ++;
 			if (tsp->p < tsp->e) {
@@ -800,6 +809,7 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 					GOT(QUERY_VALUE, p, e-p);
 			}
 
+			/* FALLTHRU */
 		case TOKEN_FRAGMENT:
 			tsp->type ++;
 			/* setup for WORD */
@@ -808,6 +818,7 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 			if (tsp->uri.fragment_len > 0)
 				GOT(FRAGMENT, tsp->uri.fragment, tsp->uri.fragment_len);
 
+			/* FALLTHRU */
 		case TOKEN_WORD:
 			while (tsp->p < tsp->e) {
 				const char *p = tsp->p, *e;
@@ -820,6 +831,7 @@ Datum uri_tsparser_nexttoken(PG_FUNCTION_ARGS)
 					GOT(WORD, p, e-p);
 			}
 
+			/* FALLTHRU */
 		case TOKEN_TYPES:
 			PG_RETURN_INT32(0);
 	}
