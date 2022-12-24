@@ -1,4 +1,4 @@
-# pg_tsparser extension
+# pguri extension
 comment = 'uri and domainname parsing, types, and search'
 default_version = '1.0'
 module_pathname = '$libdir/pguri'

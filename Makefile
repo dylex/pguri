@@ -1,6 +1,6 @@
 MODULES = pguri
 EXTENSION = pguri
-DATA = pguri.sql.in
+DATA = pguri--1.0.sql.in
 PG_CONFIG = pg_config
 PGXS := $(shell pg_config --pgxs)
 include $(PGXS)
